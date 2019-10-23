@@ -72,8 +72,8 @@ function init-msenv() {
 
   # Rudimentary support for VS2017 in default install location due to
   # lack of VS1S0COMNTOOLS environment variable.
-  if [ -d "C:/Program Files (x86)/Microsoft Visual Studio/2017/Community/VC/Auxiliary/Build" ]; then
-    vcvars_path="C:/Program Files (x86)/Microsoft Visual Studio/2017/Community/VC/Auxiliary/Build"
+  if [ -d "C:/Program Files (x86)/Microsoft Visual Studio/2019/Community/VC/Auxiliary/Build" ]; then
+    vcvars_path="C:/Program Files (x86)/Microsoft Visual Studio/2019/Community/VC/Auxiliary/Build"
   elif [ ! -z "$VS140COMNTOOLS" ]; then
     vcvars_path="${VS140COMNTOOLS}../../VC"
   else
@@ -266,12 +266,13 @@ function patch() {
 function compile::ninja() {
   local outputdir="$1"
   local gn_args="$2"
-
-  echo "Generating project files with: $gn_args"
-  gn gen $outputdir --args="$gn_args"
-  pushd $outputdir >/dev/null
+  pushd $SRC_DIR >/dev/null
+  if [ $BUILD_GN = 1 ]; then	   
+    echo "Generating project files with: $gn_args"
+    gn gen $outputdir --args="$gn_args"
+  fi 
     # ninja -v -C  .
-    ninja -C  .
+    ninja -C  $outputdir
   popd >/dev/null
 }
 
@@ -380,7 +381,19 @@ function combine::static() {
     case $platform in
     win)
       # TODO: Support VS 2017
-      "$VS140COMNTOOLS../../VC/bin/lib" /OUT:$libname.lib @$libname.list
+	  # Support VS 2019, https://devblogs.microsoft.com/cppblog/finding-the-visual-c-compiler-tools-in-visual-studio-2017/
+      vs2019_config_file="C:/Program Files (x86)/Microsoft Visual Studio/2019/Community/VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt"
+      if [ -e "$vs2019_config_file" ]; then
+        vs2019_version=`cat "$vs2019_config_file"`
+        vslib="C:/Program Files (x86)/Microsoft Visual Studio/2019/Community/VC/Tools/MSVC/$vs2019_version/bin/Host$TARGET_CPU/$TARGET_CPU/lib"
+      elif [ ! -z "$VS140COMNTOOLS" ]; then
+        vslib="$VS140COMNTOOLS../../VC/bin/lib"
+      else
+        echo "Building under Microsoft Windows requires Microsoft Visual Studio 2015 Update 3"
+        exit 1
+      fi
+      "$vslib" /OUT:$libname.lib @$libname.list
+      #"$VS140COMNTOOLS../../VC/bin/lib" /OUT:$libname.lib @$libname.list
       ;;
     *)
       # Combine *.a static libraries
@@ -440,14 +453,14 @@ function compile() {
     [ $platform = 'linux' ] && common_args+=" use_sysroot=false linux_use_bundled_binutils=false use_custom_libcxx=false use_custom_libcxx_for_host=false"
   fi
 
-  pushd $outdir/src >/dev/null
+  pushd $outdir >/dev/null
     for cfg in $configs; do
       [ "$cfg" = 'Release' ] && common_args+=' is_debug=false strip_debug_info=true symbol_level=0'
-      compile::ninja "out/$target_cpu/$cfg" "$common_args $target_args"
+      compile::ninja "$outdir/$target_cpu/$cfg" "$common_args $target_args"
 
       if [ $COMBINE_LIBRARIES = 1 ]; then
         # Method 1: Merge the static .a/.lib libraries.
-        combine::static $platform "out/$target_cpu/$cfg" libwebrtc_full
+        combine::static $platform "$outdir/$target_cpu/$cfg" libwebrtc_full
         
         # Method 2: Merge .o/.obj objects to create the library, although results 
         # have been inconsistent so the static merging method is default.
@@ -483,33 +496,29 @@ function package::prepare() {
 
     # Create directory structure
     mkdir -p $package_filename/include packages
-    pushd src >/dev/null
-
-      # Find and copy header files
-      local header_source_dir=webrtc
+    # Find and copy header files
+    local header_source_dir=$SRC_DIR
       
       # Revision 19846 moved src/webrtc to src/
       # https://webrtc.googlesource.com/src/+/92ea95e34af5966555903026f45164afbd7e2088
-      [ $revision_number -ge 19846 ] && header_source_dir=.
+      #[ $revision_number -ge 19846 ] && header_source_dir=.
 
       # Copy header files, skip third_party dir
-      find $header_source_dir -path './third_party' -prune -o -type f \( -name '*.h' \) -print | \
-        xargs -I '{}' $CP --parents '{}' $outdir/$package_filename/include
+    find $header_source_dir -path './third_party' -prune -o -type f \( -name '*.h' \) -print | \
+      xargs -I '{}' $CP --parents '{}' $outdir/$package_filename/include
         
       # Find and copy dependencies
       # The following build dependencies were excluded: 
       # gflags, ffmpeg, openh264, openmax_dl, winsdk_samples, yasm
-      find $header_source_dir -name '*.h' -o -name README -o -name LICENSE -o -name COPYING | \
-        grep './third_party' | \
-        grep -E 'boringssl|expat/files|jsoncpp/source/json|libjpeg|libjpeg_turbo|libsrtp|libyuv|libvpx|opus|protobuf|usrsctp/usrsctpout/usrsctpout' | \
-        xargs -I '{}' $CP --parents '{}' $outdir/$package_filename/include
-
-    popd >/dev/null
+    find $header_source_dir -name '*.h' -o -name README -o -name LICENSE -o -name COPYING | \
+      grep './third_party' | \
+      grep -E 'boringssl|expat/files|jsoncpp/source/json|libjpeg|libjpeg_turbo|libsrtp|libyuv|libvpx|opus|protobuf|usrsctp/usrsctpout/usrsctpout' | \
+      xargs -I '{}' $CP --parents '{}' $outdir/$package_filename/include
 
     # Find and copy libraries
     for cfg in $configs; do
       mkdir -p $package_filename/lib/$TARGET_CPU/$cfg
-      pushd src/out/$TARGET_CPU/$cfg >/dev/null
+      pushd $outdir/$TARGET_CPU/$cfg >/dev/null
         mkdir -p $outdir/$package_filename/lib/$TARGET_CPU/$cfg
         if [ $COMBINE_LIBRARIES = 1 ]; then
           find . -name '*.so' -o -name '*.dll' -o -name '*.lib' -o -name '*.a' -o -name '*.jar' | \

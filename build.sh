@@ -49,14 +49,14 @@ while getopts :o:b:r:t:c:l:e:n:xDd OPTION; do
   esac
 done
 
-OUTDIR=${OUTDIR:-out}
+OUTDIR=${OUTDIR:-out/build}
 BRANCH=${BRANCH:-}
 BLACKLIST=${BLACKLIST:-}
 ENABLE_RTTI=${ENABLE_RTTI:-1}
 ENABLE_ITERATOR_DEBUGGING=0
-ENABLE_CLANG=0
+ENABLE_CLANG=1
 ENABLE_STATIC_LIBS=1
-BUILD_ONLY=${BUILD_ONLY:-0}
+BUILD_ONLY=${BUILD_ONLY:-1}
 DEBUG=${DEBUG:-0}
 CONFIGS=${CONFIGS:-Debug Release}
 COMBINE_LIBRARIES=${COMBINE_LIBRARIES:-1}
@@ -66,15 +66,20 @@ PACKAGE_NAME_PATTERN=${PACKAGE_NAME_PATTERN:-"webrtc"}
 PACKAGE_VERSION_PATTERN=${PACKAGE_VERSION_PATTERN:-"%rn%"}
 REPO_URL="https://chromium.googlesource.com/external/webrtc"
 DEPOT_TOOLS_URL="https://chromium.googlesource.com/chromium/tools/depot_tools.git"
-DEPOT_TOOLS_DIR=$DIR/depot_tools
+WORKDIR="/d/webrtc"
+DEPOT_TOOLS_DIR=$WORKDIR/depot_tools
+SRC_DIR=$WORKDIR/webrtccode/src
 TOOLS_DIR=$DIR/tools
-PATH=$DEPOT_TOOLS_DIR:$DEPOT_TOOLS_DIR/python276_bin:$PATH
+BUILD_GN=0
+PATH=$DEPOT_TOOLS_DIR:$PATH
+REVISION=1
+REVISION_NUMBER=78
 
 [ "$DEBUG" = 1 ] && set -x
 
 mkdir -p $OUTDIR
 OUTDIR=$(cd $OUTDIR && pwd -P)
-
+echo  $OUTDIR
 detect-platform
 TARGET_OS=${TARGET_OS:-$PLATFORM}
 TARGET_CPU=${TARGET_CPU:-x64}
@@ -87,31 +92,31 @@ echo Checking build environment dependencies
 check::build::env $PLATFORM "$TARGET_CPU"
 
 echo Checking depot-tools
-check::depot-tools $PLATFORM $DEPOT_TOOLS_URL $DEPOT_TOOLS_DIR
+#check::depot-tools $PLATFORM $DEPOT_TOOLS_URL $DEPOT_TOOLS_DIR
 
-if [ ! -z $BRANCH ]; then
-  REVISION=$(git ls-remote $REPO_URL --heads $BRANCH | head --lines 1 | cut --fields 1) || \
-    { echo "Cound not get branch revision" && exit 1; }
-   echo "Building branch: $BRANCH"
-else
-  REVISION=${REVISION:-$(latest-rev $REPO_URL)} || \
-    { echo "Could not get latest revision" && exit 1; }
-fi
-echo "Building revision: $REVISION"
-REVISION_NUMBER=$(revision-number $REPO_URL $REVISION) || \
-  { echo "Could not get revision number" && exit 1; }
-echo "Associated revision number: $REVISION_NUMBER"
+#if [ ! -z $BRANCH ]; then
+#  REVISION=$(git ls-remote $REPO_URL --heads $BRANCH | head --lines 1 | cut --fields 1) || \
+#    { echo "Cound not get branch revision" && exit 1; }
+#   echo "Building branch: $BRANCH"
+#else
+#  REVISION=${REVISION:-$(latest-rev $REPO_URL)} || \
+#    { echo "Could not get latest revision" && exit 1; }
+#fi
+#echo "Building revision: $REVISION"
+#REVISION_NUMBER=$(revision-number $REPO_URL $REVISION) || \
+#  { echo "Could not get revision number" && exit 1; }
+#echo "Associated revision number: $REVISION_NUMBER"
 
-if [ $BUILD_ONLY = 0 ]; then
-  echo "Checking out WebRTC revision (this will take a while): $REVISION"
-  checkout "$TARGET_OS" $OUTDIR $REVISION
-
-  echo Checking WebRTC dependencies
-  check::webrtc::deps $PLATFORM $OUTDIR "$TARGET_OS"
-
-  echo Patching WebRTC source
-  patch $PLATFORM $OUTDIR $ENABLE_RTTI
-fi
+#if [ $BUILD_ONLY = 0 ]; then
+#  echo "Checking out WebRTC revision (this will take a while): $REVISION"
+#  checkout "$TARGET_OS" $OUTDIR $REVISION
+#
+#  echo Checking WebRTC dependencies
+#  check::webrtc::deps $PLATFORM $OUTDIR "$TARGET_OS"
+#
+#  echo Patching WebRTC source
+#  patch $PLATFORM $OUTDIR $ENABLE_RTTI
+#fi
 
 echo Compiling WebRTC
 compile $PLATFORM $OUTDIR "$TARGET_OS" "$TARGET_CPU" "$CONFIGS" "$BLACKLIST"
@@ -123,7 +128,7 @@ PACKAGE_VERSION=$(interpret-pattern "$PACKAGE_VERSION_PATTERN" "$PLATFORM" "$OUT
 
 echo "Packaging WebRTC: $PACKAGE_FILENAME"
 package::prepare $PLATFORM $OUTDIR $PACKAGE_FILENAME $DIR/resource "$CONFIGS" $REVISION_NUMBER
-if [ "$PACKAGE_AS_DEBIAN" = 1 ]; then
+if [ $PACKAGE_AS_DEBIAN = 1 ]; then
   package::debian $OUTDIR $PACKAGE_FILENAME $PACKAGE_NAME $PACKAGE_VERSION "$(debian-arch $TARGET_CPU)"
 else
   package::archive $PLATFORM $OUTDIR $PACKAGE_FILENAME
